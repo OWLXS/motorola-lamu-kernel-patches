@@ -1,0 +1,24 @@
+From: TheMoon <execorvo@gmail.com>
+Subject: [PATCH] tcp: make BBR the active default congestion control
+
+CONFIG_TCP_CONG_BBR=y only compiles BBR in as an available option;
+without CONFIG_DEFAULT_BBR=y the kernel keeps using whatever the
+Kconfig default congestion-control choice resolves to (typically
+cubic), so BBR sat unused unless userspace flipped
+net.ipv4.tcp_congestion_control manually at boot. This makes BBR the
+actual default from boot.
+
+Applies to: kernel-6.6/arch/arm64/configs/gki_defconfig
+---
+diff --git a/arch/arm64/configs/gki_defconfig b/arch/arm64/configs/gki_defconfig
+index 4e687735adeb..2222222222 100644
+--- a/arch/arm64/configs/gki_defconfig
++++ b/arch/arm64/configs/gki_defconfig
+@@ -159,6 +158,7 @@ CONFIG_TCP_CONG_ADVANCED=y
+ # CONFIG_TCP_CONG_WESTWOOD is not set
+ # CONFIG_TCP_CONG_HTCP is not set
+ CONFIG_TCP_CONG_BBR=y
++CONFIG_DEFAULT_BBR=y
+ CONFIG_IPV6_ROUTER_PREF=y
+ CONFIG_IPV6_ROUTE_INFO=y
+ CONFIG_IPV6_OPTIMISTIC_DAD=y

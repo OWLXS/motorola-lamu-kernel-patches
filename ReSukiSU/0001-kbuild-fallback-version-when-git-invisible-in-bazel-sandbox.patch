@@ -1,0 +1,69 @@
+From: TheMoon <execorvo@gmail.com>
+Subject: [PATCH] kbuild: fall back to pinned version info when .git is invisible
+
+Bazel's glob() never descends into dot-directories, so
+LOCAL_GIT_EXISTS is always 0 inside a Kleaf build sandbox, and the
+hard $(error ...) in the original Kbuild made the kernel unbuildable
+via Bazel entirely -- KernelSU-style forks that shell out to git for
+version info hit this the moment you try to build them under
+Kleaf/Bazel instead of plain Kbuild/make.
+
+Replaces the fatal error with a fallback branch that uses pinned
+values (computed once from the real checkout via `git rev-list --count
+HEAD`, `git describe --abbrev=0 --tags`, `git rev-parse --short=8
+HEAD`), while keeping the git-derived path for normal, non-sandboxed
+builds. Update KSU_LOCAL_VERSION/KSU_TAG_NAME/KSU_COMMIT_SHA/
+KSU_BRANCH_NAME to your own fork's actual values before applying.
+
+This is a general Kleaf/Bazel + KernelSU-fork integration fix, not
+specific to any one fork -- applies to KernelSU, KernelSU-Next,
+ReSukiSU, and other forks whose kernel/Kbuild has this same
+git-or-die version-detection pattern.
+
+Applies to: <ksu-fork>/kernel/Kbuild
+---
+diff --git a/kernel/Kbuild b/kernel/Kbuild
+index 4ac11d61..3f103588 100644
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -60,27 +60,31 @@ KSU_SRC := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+
+ LOCAL_GIT_EXISTS := $(shell test -e $(KSU_SRC)/../.git && echo 1 || echo 0)
+
+-ifeq ($(LOCAL_GIT_EXISTS),0)
+-$(info -- Can't find $(REPO_NAME) git submodule!)
+-$(info -- If you are using bazel to build this kernel,)
+-$(info -- Please go to Kbuild and change KSU_SRC to the absolute path of the KSU kernel folder.)
+-$(error You should use $(REPO_NAME) as a git submodule instead of copying code directly)
+-endif
+-
+ ifdef KBUILD_EXTMOD
+ include $(KSU_SRC)/tools/ddk_compatible.mk
+ endif
+
++ifeq ($(LOCAL_GIT_EXISTS),1)
+ $(shell cd $(KSU_SRC); [ -f ../.git/shallow ] && $(GIT_BIN) fetch --unshallow)
+ KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+-KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
+-
+ KSU_TAG_NAME    := $(shell cd $(KSU_SRC); $(GIT_BIN) describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")
+ KSU_COMMIT_SHA  := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+ ifneq ($(shell cd $(KSU_SRC); $(GIT_BIN) diff-index --quiet HEAD; echo $$?),0)
+ KSU_COMMIT_SHA  := $(KSU_COMMIT_SHA)-dirty
+ endif
+ KSU_BRANCH_NAME := $(shell cd $(KSU_SRC); $(GIT_BIN) branch --show-current 2>/dev/null || echo "unknown")
++else
++# Bazel's glob() does not descend into dot-directories, so .git is never
++# visible inside the build sandbox and LOCAL_GIT_EXISTS is always 0 there.
++# Values below were computed once from the real checkout:
++#   git rev-list --count HEAD / describe --abbrev=0 --tags / rev-parse --short=8 HEAD
++$(info -- $(REPO_NAME): .git not visible (Bazel sandbox), using pinned version info)
++KSU_LOCAL_VERSION := 4381
++KSU_TAG_NAME := v4.2.0-rc1
++KSU_COMMIT_SHA := 06390a6a
++KSU_BRANCH_NAME := main
++endif
++KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
+
+ # call subst to process placeholders
+ KSU_VERSION_FULL := $(subst ",,$(CONFIG_KSU_FULL_NAME_FORMAT))

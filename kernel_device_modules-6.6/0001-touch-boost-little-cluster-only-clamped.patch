@@ -1,0 +1,112 @@
+From: TheMoon <execorvo@gmail.com>
+Subject: [PATCH] touch_boost: little cluster only, clamped duration
+
+Tunes MediaTek's touch_boost driver for a 6+2 (little/big) topology
+(e.g. 6x Cortex-A55 + 2x Cortex-A75):
+
+- Little cluster gets a moderate touch boost, clamped to at most the
+  midpoint OPP -- never allowed to jump straight to the top of the
+  table on every tap.
+- Big cluster is permanently excluded from touch boost (left at -1,
+  disabled) and stays on schedutil. Jumping big cores to a high OPP on
+  every touch is wasted power for a signal that rarely needs that much
+  headroom; schedutil still ramps it up for real load.
+- Boost duration is clamped via TOUCH_BOOST_DURATION_MAX_MS so a
+  userspace/ROM write at boot can't request an unbounded hold time.
+
+Both the /proc write handlers and the init-time defaults are patched,
+so the sane behavior holds even if userspace never touches those proc
+nodes at all.
+
+Adjust TOUCH_TIMEOUT_MS / TOUCH_BOOST_DURATION_MAX_MS and the "opp_count[i] / 2"
+midpoint clamp to taste for your own cluster layout -- the 177ms/half-clock
+values here were tuned for a MT6768 (Helio G-class) device and are not
+universal constants.
+
+Applies to:
+- drivers/misc/mediatek/performance/touch_boost/touch_boost.c
+- drivers/misc/mediatek/performance/touch_boost/touch_boost.h
+---
+diff --git a/drivers/misc/mediatek/performance/touch_boost/touch_boost.c b/drivers/misc/mediatek/performance/touch_boost/touch_boost.c
+index 925aad5a7b52..614860c91c47 100644
+--- a/drivers/misc/mediatek/performance/touch_boost/touch_boost.c
++++ b/drivers/misc/mediatek/performance/touch_boost/touch_boost.c
+@@ -557,10 +557,18 @@ static ssize_t perfmgr_boost_opp_cluster_0_proc_write(struct file *filp,
+ 		return ret;
+
+ 	if (policy_num >= 1) {
+-		if (value >= 0 && value < opp_count[0])
++		/* Clamp requests to at most the midpoint OPP: touch boost on the
++		 * little cluster should never be allowed to reach the top of the
++		 * table, regardless of what userspace asks for.
++		 */
++		int min_allowed_idx = opp_count[0] / 2;
++
++		if (value >= min_allowed_idx && value < opp_count[0])
+ 			boost_opp_cluster[0] = value;
+-		else
++		else if (value >= opp_count[0])
+ 			boost_opp_cluster[0] = opp_count[0]-1;
++		else
++			boost_opp_cluster[0] = min_allowed_idx;
+ 	}
+
+ 	return cnt;
+@@ -597,12 +605,13 @@ static ssize_t perfmgr_boost_opp_cluster_1_proc_write(struct file *filp,
+ 	if (ret < 0)
+ 		return ret;
+
+-	if (policy_num >= 2) {
+-		if (value >= 0 && value < opp_count[1])
+-			boost_opp_cluster[1] = value;
+-		else
+-			boost_opp_cluster[1] = opp_count[1]-1;
+-	}
++	/* The big cluster does not participate in touch boost: every touch
++	 * jumping the performance cores to a high OPP is wasted power for a
++	 * signal (a tap) that rarely needs big-core headroom. Leave it to
++	 * schedutil, which will still ramp it up for real load.
++	 */
++	(void)value;
++	boost_opp_cluster[1] = -1;
+
+ 	return cnt;
+ }
+@@ -715,6 +724,11 @@ static ssize_t perfmgr_boost_duration_proc_write(struct file *filp,
+ 	if (ret < 0)
+ 		return ret;
+
++	/* Cap how long a touch-driven boost can hold the floor up; a longer
++	 * request from userspace is clamped rather than honored verbatim.
++	 */
++	if (value > TOUCH_BOOST_DURATION_MAX_MS)
++		value = TOUCH_BOOST_DURATION_MAX_MS;
+ 	boost_duration = value;
+
+ 	return cnt;
+@@ -1073,6 +1087,12 @@ static int __init touch_boost_init(void)
+ 		freq_to_set[i].max = cpu_opp_tbl[i][0];
+ 		boost_opp_cluster[i] = -1;
+ 	}
++	/* Sane defaults even if userspace never touches these proc nodes:
++	 * little cluster gets a moderate touch boost (midpoint OPP), the big
++	 * cluster stays untouched by touch boost (left at -1 == disabled).
++	 */
++	if (policy_num >= 1)
++		boost_opp_cluster[0] = opp_count[0] / 2;
+
+ 	freq_min_request = kcalloc(policy_num, sizeof(struct freq_qos_request), GFP_KERNEL);
+ 	freq_max_request = kcalloc(policy_num, sizeof(struct freq_qos_request), GFP_KERNEL);
+diff --git a/drivers/misc/mediatek/performance/touch_boost/touch_boost.h b/drivers/misc/mediatek/performance/touch_boost/touch_boost.h
+index 1001978c5dbe..b95f5e7d4ba6 100644
+--- a/drivers/misc/mediatek/performance/touch_boost/touch_boost.h
++++ b/drivers/misc/mediatek/performance/touch_boost/touch_boost.h
+@@ -4,7 +4,8 @@
+  */
+
+ #define CLUSTER_MAX 10
+-#define TOUCH_TIMEOUT_MS 100
++#define TOUCH_TIMEOUT_MS 177
++#define TOUCH_BOOST_DURATION_MAX_MS 177
+ #define TOUCH_UP 0
+ #define TOUCH_DOWN 1

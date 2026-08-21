@@ -1,0 +1,47 @@
+From: TheMoon <execorvo@gmail.com>
+Subject: [PATCH] zram: lz4 primary compressor, zstd for idle-page recompression
+
+CONFIG_ZRAM_DEF_COMP_LZ4=y sets lz4 as the primary (hot-path)
+compressor, favoring speed over ratio for pages being actively
+swapped in/out.
+
+zram_drv.c additionally sets zstd as the ZRAM_MULTI_COMP secondary
+compressor: idle/cold pages get recompressed with zstd, trading extra
+CPU time for a better ratio -- worth it since those pages are already
+infrequently touched by definition.
+
+Applies to:
+- kernel-6.6/arch/arm64/configs/gki_defconfig
+- kernel-6.6/drivers/block/zram/zram_drv.c (zram_add(), near the
+  existing comp_algorithm_set(zram, ZRAM_PRIMARY_COMP, ...) call)
+---
+diff --git a/arch/arm64/configs/gki_defconfig b/arch/arm64/configs/gki_defconfig
+index 4e687735adeb..3333333333 100644
+--- a/arch/arm64/configs/gki_defconfig
++++ b/arch/arm64/configs/gki_defconfig
+@@ -328,6 +328,7 @@ CONFIG_ARM_SCPI_PROTOCOL=y
+ # CONFIG_EFI_ARMSTUB_DTB_LOADER is not set
+ CONFIG_GNSS=y
+ CONFIG_ZRAM=m
++CONFIG_ZRAM_DEF_COMP_LZ4=y
+ CONFIG_ZRAM_WRITEBACK=y
+ CONFIG_ZRAM_MULTI_COMP=y
+ CONFIG_BLK_DEV_LOOP=y
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index 7b2fc33d341e..094a8cd62080 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -2249,6 +2249,13 @@ static int zram_add(void)
+ 	snprintf(zram->disk->disk_name, 16, "zram%d", device_id);
+
+ 	comp_algorithm_set(zram, ZRAM_PRIMARY_COMP, default_compressor);
++#ifdef CONFIG_ZRAM_MULTI_COMP
++	/* Default secondary compressor for idle-page recompression: zstd
++	 * trades extra CPU time for a better ratio, which is worth it for
++	 * pages that are cold enough to be recompressed in the first place.
++	 */
++	comp_algorithm_set(zram, ZRAM_SECONDARY_COMP, "zstd");
++#endif
+
+ 	/* Actual capacity set using sysfs (/sys/block/zram<id>/disksize */
+ 	set_capacity(zram->disk, 0);

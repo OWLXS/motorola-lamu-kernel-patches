@@ -1,0 +1,37 @@
+From: TheMoon <execorvo@gmail.com>
+Subject: [PATCH] build.sh: default to --lto=thin, not Kconfig's implicit default
+
+A --lto=full build caused a real on-device bootloop (freeze at the
+bootloader logo, then a shutdown) on our MT6768 device. Most likely
+cause: CONFIG_CFI_CLANG=y combined with Full LTO's more aggressive
+whole-program optimization exposed an indirect-call type mismatch in
+untested MTK vendor driver code -- CFI panics deterministically and
+very early in boot on that kind of mismatch. Reverting to --lto=thin
+fixed it; if your kernel also has CFI enabled, don't assume Full LTO
+is safe on vendor driver code that's never been built with it before.
+
+Also (unrelated, just convenience) wires up an optional Neutron Clang
+toolchain via --user_clang_toolchain, gated behind USE_NEUTRON_CLANG
+and left disabled by default -- it broke Bazel's hermetic host tools
+for us (missing libc++ headers/runtime, sysroot mismatches). Feel free
+to drop that hunk if you don't want Neutron Clang support at all.
+
+Applies to: kernel_device_modules-6.6/build.sh
+---
+diff --git a/build.sh b/build.sh
+index 4df14394aca4..cd6f6b2477aa 100755
+--- a/build.sh
++++ b/build.sh
+@@ -26,10 +26,11 @@ KLEAF_ARGS=("${DEBUG_ARGS} ${SANDBOX_ARGS} \
+ 	--experimental_writable_outputs \
+ 	--noenable_bzlmod \
+ 	--config=stamp \
++	--lto=thin \
+ 	--//build/bazel_mgk_rules:kernel_version=${KERNEL_VERSION_NUM}")
+
+ NEUTRON_CLANG_DIR="${ROOT_DIR}/prebuilts/neutron-clang"
+-if [ "${USE_NEUTRON_CLANG:-1}" != "0" ] && [ -x "${NEUTRON_CLANG_DIR}/bin/clang" ]; then
++if [ "${USE_NEUTRON_CLANG:-0}" != "0" ] && [ -x "${NEUTRON_CLANG_DIR}/bin/clang" ]; then
+   KLEAF_ARGS="${KLEAF_ARGS} --user_clang_toolchain=${NEUTRON_CLANG_DIR}"
+ fi
+
