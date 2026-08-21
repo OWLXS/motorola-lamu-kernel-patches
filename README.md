@@ -11,6 +11,17 @@ KernelSU-Next for ReSukiSU + integrating SUSFS) isn't here — that's a
 387-file change involving a git submodule swap, not something that fits the
 "patch" format meaningfully. See the main repos above for that.
 
+**Why it's not packaged as a patch**: honestly, mostly laziness on my part —
+turning that whole submodule swap + SUSFS integration into a clean, portable
+patch would've taken more effort than I wanted to put in right now. It's not
+that the actual work was that painful, either: swapping in ReSukiSU and
+wiring up SUSFS on top of it was pretty smooth. The part that actually gave
+me trouble was KernelSU-Next — I tried integrating SUSFS there first, and its
+hook system had already diverged from what the susfs4ksu patch assumed,
+which cascaded into failures across a bunch of files before I gave up and
+switched to ReSukiSU instead, which just worked. So if you're doing this
+yourself: skip the KernelSU-Next detour, go straight for ReSukiSU.
+
 ## Layout
 
 - `kernel-6.6/` — patches against the ACK/GKI kernel tree
